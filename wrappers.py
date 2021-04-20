@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 from torch.nn.parallel import parallel_apply
-from typing import Optional, Mapping, Union, Tuple
+from typing import Optional, Mapping, Union, Tuple, Iterable
 
-from .base import Merger, Compose
+from .base import Merger
 from .mergers import *
 
 
@@ -53,7 +53,7 @@ class SurfaceNormalsTTAWrapper(nn.Module):
     def __init__(
         self,
         model: nn.Module,
-        transforms: Compose,
+        transforms: Iterable,
         merger_fn: Merger = MeanMerger,
         run_mode: str = 'parallel_apply',
         output_mask_key: Optional[str] = None,

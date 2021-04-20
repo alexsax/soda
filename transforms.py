@@ -1,7 +1,7 @@
 from functools import partial
 from typing import Optional, List, Union, Tuple
 from . import functional as F
-from .base import DualTransform, ImageOnlyTransform, EquivariantTransform, TransformHistory
+from .base import EquivariantTransform, TransformHistory
 import torch
 from math import ceil
 

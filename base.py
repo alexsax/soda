@@ -167,7 +167,7 @@ class Product:
     '''
     def __init__(
             self,
-            transforms: List[BaseTransform],
+            transforms: List[EquivariantTransform],
     ):
         self.aug_transforms = transforms
         self.aug_transform_parameters = list(itertools.product(*[t.params for t in self.aug_transforms]))

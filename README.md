@@ -30,6 +30,7 @@ wrapper = tta.SurfaceNormalsTTAWrapper(model=model_fn, transforms=transforms, ru
 ### Idea:
 
 Augmentation is a type of equivariance, so all the transforms subclass `EquivariantTransform`, which asserts that the following diagram should commute:
+
                 f
         x'-------------> y'
         ^                ^

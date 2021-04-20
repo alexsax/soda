@@ -1,7 +1,7 @@
 from .wrappers import (
     SurfaceNormalsTTAWrapper,
 )
-from .base import Compose, Product
+from .base import Product
 
 from .transforms import *
 # (
