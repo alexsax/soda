@@ -63,6 +63,23 @@ def crop(x, x_min=None, x_max=None, y_min=None, y_max=None):
     return x[:, :, y_min:y_max, x_min:x_max]
 
 
+def crop_l(x, crop_h, crop_w):
+    """crop left bottom corner"""
+    return x[:, :, :, 0:crop_w]
+
+def crop_r(x, crop_h, crop_w):
+    """crop right top corner"""
+    return x[:, :, :, -crop_w:]
+
+def crop_t(x, crop_h, crop_w):
+    """crop left bottom corner"""
+    return x[:, :, 0:crop_h, :]
+
+def crop_b(x, crop_h, crop_w):
+    """crop right top corner"""
+    return x[:, :, -crop_h:, :]
+
+
 def crop_lt(x, crop_h, crop_w):
     """crop left top corner"""
     return x[:, :, 0:crop_h, 0:crop_w]

@@ -110,6 +110,7 @@ class HorizontalFlip(EquivariantTransform):
         return self.pre_transform(label, apply, history=history) # E=e
 
     def post_transform_inverse(self, label, apply=False, history=None, **params):
+        # print(history)
         return self.post_transform(label, apply, history=history) # E^{-1}=e
 
     def mask_transform(self, mask, apply=False, history=None, **params):
@@ -124,7 +125,7 @@ class VerticalFlip(HorizontalFlip):
     def pre_transform(self, image, apply=False, history=None, **kwargs):
         if apply:
             image = F.vflip(image)
-        return image, None
+        return image, history
 
 class SurfaceNormalHorizontalFlip(HorizontalFlip):
 
@@ -136,7 +137,7 @@ class SurfaceNormalHorizontalFlip(HorizontalFlip):
         if apply:
             label = F.hflip(label)
             label[:, self.dim_horizontal] *= -1
-        return label, None
+        return label, history
 
 
 class Resize(EquivariantTransform):
@@ -175,7 +176,7 @@ class Resize(EquivariantTransform):
                 interpolation=self.interpolation,
                 align_corners=self.align_corners,
             )
-        return image, None
+        return image, history
 
     def pre_transform_inverse(self, image, size, history=None, **params):
         if self.original_size is None:
@@ -189,7 +190,7 @@ class Resize(EquivariantTransform):
                 interpolation=self.interpolation,
                 align_corners=self.align_corners,
             )
-        return image, None
+        return image, history
 
     def post_transform(self, label, size=1, history=None, **params):
         return self.pre_transform(label, size, history=history, **params)
@@ -202,6 +203,75 @@ class Resize(EquivariantTransform):
 
     def mask_transform_inverse(self, mask, size, history=None, **params):
         return self.pre_transform_inverse(mask, size, history=history, **params)
+
+class SquarifyCrop(EquivariantTransform):
+    def __init__(self, pad_value=float('nan')):
+        super().__init__("crop", ['first', 'second'])
+        self.pad_value = pad_value  
+    
+    def pre_transform(self, image, crop='center', history=None, **kwargs):
+        is_horizontal = (image.shape[-2] <= image.shape[-1])
+        max_side = max(image.shape[-2:])
+        short_side = min(image.shape[-2:])
+        assert max_side <= 2 * short_side, "Must be max_side must be <= 2 * short_side"
+
+        if is_horizontal:
+            first_crop = F.crop_l
+            second_crop = F.crop_r
+        else:
+            first_crop = F.crop_t
+            second_crop = F.crop_b
+
+        if crop == 'first':
+            image = first_crop(image, short_side, short_side)
+        elif crop == 'second':
+            image = second_crop(image, short_side, short_side)
+        else:
+            raise NotImplementedError(f'No matching crop in {type(self).__name__} for "{crop}"')
+        cache = {'__name__': f'{type(self).__name__}.pre_transform', 'original_size': (image.shape[-2], image.shape[-1])}
+        history = TransformHistory.push(cache, history)
+        return image, history 
+    
+    def pre_transform_inverse(self, image, crop='center', pad_value=None, history=None, **params):
+        cache, history = TransformHistory.pop(history)
+        if pad_value == None:
+            pad_value = self.pad_value
+
+        B, C, crop_H, crop_W = image.shape               
+        height, width = cache['original_size']
+        assert height == width, f"{height} {width} {cache}"
+        assert crop_H == crop_W, f"{crop_H} {crop_W} {cache}"
+        is_horizontal = (height <= width)
+        if is_horizontal:
+            assert crop_H == height,f"{crop_H} {height} {cache}"
+
+        # print(width, width * (1 - self.crop_scale) / 2, height, width * (1 - self.crop_scale) / 2
+        new_size = (B, C, height, width)
+        pred = torch.full(new_size, pad_value, dtype=image.dtype, device=image.device, 
+            requires_grad=image.requires_grad)
+        if is_horizontal and crop == 'first':
+            pred[:,:, :, 0:crop_W] = image
+        elif is_horizontal and crop == 'second':
+            pred[:,:, :, -crop_W:] = image
+        elif (not is_horizontal) and crop == 'first':
+            pred[:,:, 0:crop_H:, :] = image
+        elif (not is_horizontal) and crop == 'second':
+            pred[:,:, -crop_H:, :] = image
+        else:
+            raise NotImplementedError(f'No matching crop in {type(self).__name__} for "{crop}"') 
+        return pred, history
+
+    def post_transform(self, label, crop='center', history=None, **params):
+        return self.pre_transform(image, crop, history=history) # E=e
+
+    def post_transform_inverse(self, label, crop='center', history=None, **params):
+        return self.pre_transform_inverse(label, crop, history=history) # E^{-1}=e
+
+    def mask_transform(self, mask, crop='center', history=None, **params):
+        return self.pre_transform(mask, crop, history=history)
+
+    def mask_transform_inverse(self, mask, crop='center', history=None, **params):
+        return self.pre_transform_inverse(mask, crop, pad_value=0, history=history)
 
 
 class FiveCrops(EquivariantTransform):
@@ -217,6 +287,7 @@ class FiveCrops(EquivariantTransform):
         self.pad_value = pad_value 
 
     def pre_transform(self, image, crop='center', history=None, **kwargs):
+        orig_h, orig_w = image.shape[-2], image.shape[-1] 
         crop_width = int(image.shape[-1] * self.crop_scale)
         crop_height = int(image.shape[-2] * self.crop_scale)
         left = int(image.shape[-1] * (1 - self.crop_scale) / 2)
@@ -233,23 +304,26 @@ class FiveCrops(EquivariantTransform):
             image = F.crop_rt(image, crop_h=crop_height, crop_w=crop_width)
         else:
             raise NotImplementedError(f'No matching crop in FiveCrop for "{crop}"')
-
-        return image, None
+        cache = {'__name__': f'{type(self).__name__}.pre_transform', 'original_size': (orig_h, orig_w)}
+        history = TransformHistory.push(cache, history)
+        return image, history
 
     def pre_transform_inverse(self, image, crop='center', pad_value=None, history=None, **params):
+        cache, history = TransformHistory.pop(history)        
         if pad_value == None:
             pad_value = self.pad_value
 
         B, C, crop_H, crop_W = image.shape               
-        width = ceil(1.0 / self.crop_scale * crop_W)
-        height = ceil(1.0 / self.crop_scale * crop_H)
+        # width = ceil(1.0 / self.crop_scale * crop_W)
+        # height = ceil(1.0 / self.crop_scale * crop_H)
+        height, width = cache['original_size']
         left = round(width * (1 - self.crop_scale) / 2)
         top = round(height * (1 - self.crop_scale) / 2)
         # print(width, width * (1 - self.crop_scale) / 2, height, width * (1 - self.crop_scale) / 2
         new_size = (B, C, height, width)
         pred = torch.full(new_size, pad_value, dtype=image.dtype, device=image.device, 
             requires_grad=image.requires_grad)
-        
+
         if crop == 'center':
             pred[:,:, top:top+crop_H, left:left+crop_W] = image
         elif crop == 'left_top':
@@ -263,7 +337,7 @@ class FiveCrops(EquivariantTransform):
         else:
             raise NotImplementedError(f'No matching crop in FiveCrop for "{crop}"') 
 
-        return pred, None
+        return pred, history
         # raise NotImplementedError
         # return self.pre_transform(image, apply) # self-inverse
 
