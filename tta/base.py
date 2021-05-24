@@ -62,23 +62,74 @@ class EquivariantTransform:
         self.params = params
         self.pname = name
 
-    def pre_transform(self, image, *args, **params):
+    def pre_transform(self, image, history=None, *args, **params):
         raise NotImplementedError
 
-    def pre_transform_inverse(self, image, *args, **params):
+    def pre_transform_inverse(self, image, history=None, *args, **params):
         raise NotImplementedError
 
-    def post_transform(self, label, *args, **params):
+    def post_transform(self, label, history=None, *args, **params):
         raise NotImplementedError
 
-    def post_transform_inverse(self, label, *args, **params):
+    def post_transform_inverse(self, label, history=None, *args, **params):
         raise NotImplementedError
 
-    def mask_transform(self, mask, *args, **params):
-        return mask 
+    def mask_transform(self, mask, history=None, *args, **params):
+        return mask, history
     
-    def mask_transform_inverse(self, mask, *args, **params):
-        return mask
+    def mask_transform_inverse(self, mask, history=None, *args, **params):
+        return mask, history
+
+class InvariantTransform(EquivariantTransform):
+    '''
+    The following diagram should commute:
+
+        x'
+        ^ \      
+      e |  \ 
+        |   \
+        x -> y'
+          f 
+
+    i.e. E( f( e(x) )) = y (at least for some restricted range of values S)
+        e(x):      pre_transform
+        e^{-1}(x): pre_transform_inverse (if exists)
+        E(y):      post_transform
+    
+    Notes: If S is smaller than the whole image, 
+        `mask_restriction` indicates the VALID pixels in S. 
+    Note: to use this transform for TEST-time augmentation,
+        `post_transform_inverse` must be implemented 
+
+    '''
+    def __init__(
+            self,
+            name: str,
+            params: Union[list, tuple],
+    ):
+        '''
+        name:   Name of the param (used for printing/debugging)
+        params: Possible parameterizations of the transform 
+        '''
+        super().__init__(name=name, params=params)
+
+    def pre_transform(self, image, history=None, *args, **params):
+        raise NotImplementedError
+
+    def pre_transform_inverse(self, image, history=None, *args, **params):
+        raise NotImplementedError
+
+    def post_transform(self, label, history=None, *args, **params):
+        return label, history
+
+    def post_transform_inverse(self, label, history=None, *args, **params):
+        return label, history
+
+    def mask_transform(self, mask, history=None, *args, **params):
+        return mask, history
+    
+    def mask_transform_inverse(self, mask, history=None, *args, **params):
+        return mask, history
 
     # def mask_restriction(self, mask, *args, **params):
     #     forward_mask = self.mask_transform(self, mask, *args, **params) 

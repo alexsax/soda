@@ -1,10 +1,54 @@
 from functools import partial
 from typing import Optional, List, Union, Tuple
 from . import functional as F
-from .base import EquivariantTransform, TransformHistory
+from .base import EquivariantTransform, InvariantTransform, TransformHistory
 import torch
 from math import ceil
 
+##########################
+# Invariant Transforms   #
+##########################
+
+class MakeInvariantTransform(InvariantTransform):
+
+    def __init__(self, transform, name=None):
+        if name is None:
+            name = str(type(transform).__name__)
+        super().__init__(name=name, params=['singleton'])
+        self.transform = transform
+    
+    def pre_transform(self, image, history=None, **kwargs):
+        return self.transform(image), history
+
+class MakeInvariantTransformNTries(InvariantTransform):
+
+    def __init__(self, transform, name=None, n_tries=3):
+        if name is None:
+            name = str(type(transform).__name__)
+        super().__init__(name=name, params=[f'try{k}' for k in range(n_tries)])
+        self.transform = transform
+    
+    def pre_transform(self, image, history=None, **kwargs):
+        return self.transform(image), history
+
+class InvariantTransformFromKornia(InvariantTransform):
+
+    def __init__(self, transform, name=None):
+        if name is None:
+            name = str(type(transform).__name__)
+        super().__init__(name=name, params=['singleton'])
+        self.transform = transform
+    
+    def pre_transform(self, image, history=None, **kwargs):
+        # image, _ = self.transform(image, **kwargs)
+        image = self.transform(image)
+        return image, history
+
+
+
+##########################
+# Equivariant Transforms # 
+##########################
 class ResizeShortestEdge(EquivariantTransform):
     """Resize images
 
@@ -88,7 +132,6 @@ class ResizeShortestEdge(EquivariantTransform):
     def mask_transform_inverse(self, mask, size, history=None, **kwargs):
         return self.pre_transform_inverse(mask, size, history, **kwargs)
 
-
 class HorizontalFlip(EquivariantTransform):
     """Flip images horizontally (left->right)"""
 
@@ -119,7 +162,6 @@ class HorizontalFlip(EquivariantTransform):
     def mask_transform_inverse(self, mask, apply=False, history=None, **params):
         return self.pre_transform(mask, apply, history=history)
 
-
 class VerticalFlip(HorizontalFlip):
 
     def pre_transform(self, image, apply=False, history=None, **kwargs):
@@ -138,7 +180,6 @@ class SurfaceNormalHorizontalFlip(HorizontalFlip):
             label = F.hflip(label)
             label[:, self.dim_horizontal] *= -1
         return label, history
-
 
 class Resize(EquivariantTransform):
     """Resize images
@@ -214,6 +255,7 @@ class SquarifyCrop(EquivariantTransform):
         max_side = max(image.shape[-2:])
         short_side = min(image.shape[-2:])
         assert max_side <= 2 * short_side, "Must be max_side must be <= 2 * short_side"
+        original_size = (image.shape[-2], image.shape[-1])
 
         if is_horizontal:
             first_crop = F.crop_l
@@ -228,7 +270,7 @@ class SquarifyCrop(EquivariantTransform):
             image = second_crop(image, short_side, short_side)
         else:
             raise NotImplementedError(f'No matching crop in {type(self).__name__} for "{crop}"')
-        cache = {'__name__': f'{type(self).__name__}.pre_transform', 'original_size': (image.shape[-2], image.shape[-1])}
+        cache = {'__name__': f'{type(self).__name__}.pre_transform', 'original_size': original_size}
         history = TransformHistory.push(cache, history)
         return image, history 
     
@@ -239,7 +281,6 @@ class SquarifyCrop(EquivariantTransform):
 
         B, C, crop_H, crop_W = image.shape               
         height, width = cache['original_size']
-        assert height == width, f"{height} {width} {cache}"
         assert crop_H == crop_W, f"{crop_H} {crop_W} {cache}"
         is_horizontal = (height <= width)
         if is_horizontal:
@@ -272,7 +313,6 @@ class SquarifyCrop(EquivariantTransform):
 
     def mask_transform_inverse(self, mask, crop='center', history=None, **params):
         return self.pre_transform_inverse(mask, crop, pad_value=0, history=history)
-
 
 class FiveCrops(EquivariantTransform):
     """
@@ -352,4 +392,6 @@ class FiveCrops(EquivariantTransform):
 
     def mask_transform_inverse(self, mask, crop='center', history=None, **params):
         return self.pre_transform_inverse(mask, crop, pad_value=0, history=history)
+
+
 

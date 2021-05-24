@@ -1,3 +1,6 @@
 .ipynb_checkpoints
 tmp/
+wandb/
 __pycache__
+nonlinear_kernels
+*.ipynb
