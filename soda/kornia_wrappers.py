@@ -16,6 +16,7 @@ class KorniaMAct(MAct):
         super().__init__()
         self.aug = aug
         if self.aug.return_transform:
+            # self.aug.return_transform = True
             raise ValueError(f"Augmentation {self.aug} must use 'return_transform' == False!")
         quicktest = False
         if quicktest:
@@ -35,7 +36,6 @@ class KorniaMAct(MAct):
     def __repr__(self):
         return f'{type(self).__name__}.{type(self.aug).__name__}'
 
-        
     def random_action(self, x, trace=None):
         m = self.aug.forward_parameters(x.shape)
         return self.action(m, x, trace)
@@ -44,11 +44,29 @@ class KorniaMAct(MAct):
         if trace is None:
             trace = Trace()
 #         x = self.aug(x, m)
-        x = self.aug(x, m)
+        if 'do_inverse' in m:
+            x = self.aug.inverse(x, params=m)
+        else:
+            x = self.aug(x, m)
         cache = {'__name__': f'{self.__repr__()}', 'param': m}
         cache = self._ensure_wrap_type(cache)
         return x, trace.push(cache)
 
+  
+class KorniaGAct(KorniaMAct, GActMixin):
+    def __init__(self, aug, quicktest=False):
+        super().__init__(
+            aug       = aug,
+            quicktest = quicktest
+        ) 
+    
+    def inv(self, m):
+        m = copy.copy(m)
+        if 'do_inverse' in m:
+            del m['do_inverse']
+        else:
+            m['do_inverse'] = True
+        return m
 
 ##### Crops
 def bbox_transform(source: torch.Tensor, boxes: torch.Tensor, width: int, height: int) -> torch.Tensor:
@@ -104,7 +122,6 @@ def bbox_transform(source: torch.Tensor, boxes: torch.Tensor, width: int, height
     return target
 
 
-
 class FixedSizeCrop(KorniaMAct, GActMixin):
     def __init__(quicktest=True, **kwargs):
         super().__init__(
@@ -143,7 +160,7 @@ class FixedSizeCrop(KorniaMAct, GActMixin):
             m_inv['inv'] = not m_inv['inv']
         return m_inv
 
-    
+
 
 #### Flips ###################
 class HFlip(KorniaMAct, GActMixin):
@@ -168,7 +185,12 @@ class VFlip(KorniaMAct, GActMixin):
     def inv(self, m):
         return m
 
-    
+class RandomErasingMask(KorniaGAct):
+    def action(self, m, x, trace=None):
+        if 'do_inverse' in m:
+            m = copy.copy(m)
+            del m['do_inverse']
+        return super().action(m, x, trace)
 
 if __name__ == '__main__':
     import kornia

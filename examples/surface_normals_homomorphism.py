@@ -1,10 +1,13 @@
 import copy
+import kornia
 import kornia.augmentation as K
+import torch
+import random
 from typing import Any, Optional, Dict, Tuple, Union, Callable
 
 from ..soda.algebra import MAct, GActMixin, QuickWrapGroup, TrivialGroup, TraceGroup
 from ..soda.trace import Trace
-from ..soda.kornia_wrappers import KorniaMAct, HFlip, VFlip, FixedSizeCrop
+from ..soda.kornia_wrappers import KorniaMAct, KorniaGAct, RandomErasingMask 
 from ..soda.homomorphisms import NaturalMonoidHomomorphism, NaturalGroupHomomorphism
 
 #########################################################
@@ -26,43 +29,159 @@ from ..soda.homomorphisms import NaturalMonoidHomomorphism, NaturalGroupHomomorp
 
 class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
     SURFACE_NORMALS_HORIZONTAL_CHANNEL = 0
-    SURFACE_NORMALS_VERTICAL_CHANNEL = 2
+    SURFACE_NORMALS_VERTICAL_CHANNEL = 1
+    SURFACE_NORMALS_FRONT_FACING_CHANNEL = 2
+    FRONT_FACING_VECTOR = torch.tensor([[0.,0.,0.]]) 
+    FRONT_FACING_VECTOR[:, SURFACE_NORMALS_FRONT_FACING_CHANNEL] += 1.0
+    NORMALS_RANGE = (0,1)
+    
+    @classmethod
+    def convert_for_geometry(cls, x):
+        return x * 2 - 1
 
-    def __init__(self):
-        ''' Applying source structure is expected to be idempotent.'''
-        source_structure = []
-        target_structure = []
-        mask_structure = []
-        mask_structure_map = {}
-        target_structure_map = {}
+    @classmethod
+    def convert_for_output(cls, x):
+        return (x + 1) / 2
+
+    @classmethod
+    def rot_xy(cls, m, x, trace, extra):
+        degrees = m['angle']
+        if 'do_inverse' in m:
+            degrees = -degrees
+        x = SurfaceNormalSymmetries.convert_for_geometry(x)
+        FRONT_FACING_VECTOR = torch.tensor([[0,1,0]])
+        rads = kornia.geometry.conversions.deg2rad(degrees)
+        axangle = SurfaceNormalSymmetries.FRONT_FACING_VECTOR.to(rads.device) * rads.unsqueeze(-1)
+        rot_mats = kornia.geometry.conversions.angle_axis_to_rotation_matrix(axangle)
+#                 rot_mats = rot_xy(trace[-1]['param']['angle'])
+        x = torch.einsum('bdc,bchw->bdhw', rot_mats.to(x.device), x)
+        x = SurfaceNormalSymmetries.convert_for_output(x)
+        return m, x, trace, extra
+
+    @classmethod
+    def invert_horiz(cls, m, x, trace, extra):
+        x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_HORIZONTAL_CHANNEL] = 1 - x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_HORIZONTAL_CHANNEL]
+        return m, x, trace, extra
+
+    @classmethod
+    def invert_vert(cls, m, x, trace, extra):
+        x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_VERTICAL_CHANNEL] = 1 - x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_VERTICAL_CHANNEL]
+        return m, x, trace, extra
         
+    def __init__(self,
+                 ignore_eps=1e-8,
+                 random_horizontal_flip_kwargs=dict(
+                     same_on_batch=False,
+                     p = 0.5,
+                     p_batch = 1.0
+                 ),
+                 random_vertical_flip_kwargs=dict(
+                     same_on_batch=False,
+                     p = 0.,
+                     p_batch = 1.0
+                 ),                
+                 random_affine_kwargs=dict(
+                     degrees=(-30,30),
+                     scale=(0.75, 1.25),
+                     same_on_batch=False,
+                     p = 1.0,
+                 ),                   
+                 random_crop_kwargs=dict(
+                     size=(512, 512),
+                     p=1.0,
+                     resample='NEAREST',
+                     cropping_mode='resample',
+                     same_on_batch=False,
+                 ),
+                 random_erasing_kwargs=dict(
+                     scale=(.02, .3),
+                     ratio=(.3, 1/.3),
+                     p=1.0
+                 ),
+                 random_grayscale_kwargs=dict(
+                     p=0.2,
+                 ),
+                 random_equalize_kwargs=dict(
+                     p=0.2,
+                 ),                 
+                 random_motion_blur_kwargs=dict(
+                     kernel_size=5,
+                     angle=35.,
+                     direction=0.5,
+                     p=0.0,
+                 ),
+                 random_gaussian_noise_kwargs=dict(
+                     mean=0.,
+                     std=0.03,
+                     p=0.8
+                 ),
+                 random_gaussian_blur_kwargs=dict(
+                     kernel_size=(5, 5),
+                     sigma=(0.1, 2.0),
+                     p=0.8
+                 ),
+                 random_sharpness_kwargs=dict(
+                     sharpness=10,
+                     p=0.0,
+                 ),
+                 random_color_jitter_kwargs=dict(
+                     brightness=0.2,
+                     contrast=0.15,
+                     saturation=0.8,
+                     hue=0.3,
+                     p=0.8
+                 ),
+                 random_posterize_kwargs=dict(
+                     bits=6,
+                     p=1.0,
+                 ),  
+                 randomize_non_invariances=False,
+                 randomize_invariances=True,
+                 resample_invariances=False,
+                ):
+        ''' Applying source structure is expected to be idempotent.'''
+        source_structure, target_structure, mask_structure = [], [], []
+        target_structure_map, mask_structure_map = {}, {}
+        self.randomize_non_invariances = randomize_non_invariances
+        self.randomize_invariances = randomize_invariances
+        self.resample_invariances = resample_invariances
+
         ##################################
         #  EQUIVARIANCES
         ##################################
-        #######  Flip equivariance  ######
-        def invert_horiz(m, x, trace, extra):
-            x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_HORIZONTAL_CHANNEL] = 1 - x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_HORIZONTAL_CHANNEL]
-            return m, x, trace, extra
-        hflip_rgb = HFlip()
-        hflip_normals = QuickWrapGroup(hflip_rgb, {'hook_after_action': invert_horiz})
-        source_structure.append(hflip_rgb)
-        target_structure_map[hflip_rgb] = hflip_normals
-        
-        def invert_vert(m, x, trace, extra):
-            x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_VERTICAL_CHANNEL] = 1 - x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_VERTICAL_CHANNEL]
-            return m, x, trace, extra
-        vflip_rgb = VFlip()
-        vflip_normals = QuickWrapGroup(vflip_rgb, {'hook_after_action': invert_vert})
-        source_structure.append(vflip_rgb)
-        target_structure_map[vflip_rgb] = vflip_normals
-
-
-        ######  Rotation equivariance  ######
-        ######  Resize equivariance  ######
+        ######  Affine transforms:  ######
+        ######     Resize           ######
+        ######     Rotation         ######
+        if not (random_affine_kwargs['p'] < ignore_eps):
+            affine_rgb = KorniaGAct(K.RandomAffine(**random_affine_kwargs))
+            affine_normals = QuickWrapGroup(affine_rgb, {'hook_after_action': SurfaceNormalSymmetries.rot_xy})
+            source_structure.append(affine_rgb)
+            target_structure_map[affine_rgb] = affine_normals
+            
         ######  Crop equivariance  ######
-        source_structure.append(FixedSizeCrop(size=(256, 256), p=1.0, return_transform=False))
+        # source_structure.append(FixedSizeCrop(size=(256, 256), p=1.0, return_transform=False))
+        if not (random_crop_kwargs['p'] < ignore_eps):
+            source_structure.append(KorniaGAct(K.RandomCrop(**random_crop_kwargs)))
 
-        
+        #######  Horizontal flip equivariance  ######
+        if not (random_horizontal_flip_kwargs['p'] < ignore_eps):
+            hflip_rgb = KorniaGAct(K.RandomHorizontalFlip(**random_horizontal_flip_kwargs))
+            hflip_normals = QuickWrapGroup(hflip_rgb, {'hook_after_action': SurfaceNormalSymmetries.invert_horiz})
+            source_structure.append(hflip_rgb)
+            target_structure_map[hflip_rgb] = hflip_normals
+
+        #######  Vertical flip equivariance  ######
+        if not (random_vertical_flip_kwargs['p'] < ignore_eps):
+            vflip_rgb = KorniaGAct(K.RandomVerticalFlip(return_transform=False, same_on_batch=False, p = 0.5, p_batch = 1.0))
+            vflip_normals = QuickWrapGroup(vflip_rgb, {'hook_after_action': SurfaceNormalSymmetries.invert_vert})
+            source_structure.append(vflip_rgb)
+            target_structure_map[vflip_rgb] = vflip_normals
+
+
+        ######  Random mask inpainting  ######
+        if not (random_erasing_kwargs['p'] < ignore_eps):
+            source_structure.append(RandomErasingMask(K.RandomErasing(**random_erasing_kwargs)))
+
         ######  Multiview/Flow equivariance  ######
 
 
@@ -73,16 +192,21 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
         invariances = {
             KorniaMAct(source): trivial_group
             for source in [
-                K.RandomEqualize(p=1.),                          ######  Equalization invariance   ######
-                K.RandomMotionBlur(5, 35., 0.5, p=1.),           ######  Motion blur invariance   ######
-                K.RandomGaussianNoise(mean=0., std=0.03, p=1.),  ######  Noise invariance   ######
-                K.GaussianBlur((3, 3), (0.1, 2.0), p=1.),        ######  Blur invariance   ######
-                K.RandomSharpness(10, p=1.),                     ######  Sharpen invariance   ######
-                ######  Defocus invariance   ######
-#                 K.RandomSolarize(0.1, 0.1, p=1.)                 ######  [Buggy?] Solarize invariance   ######
-#                 K.RandomPosterize(3, p=1.),                      ######  [CPU-only] Posterize invariance   ######
+                K.RandomGrayscale(**random_grayscale_kwargs),           ######  Grayscale invariance   ######
+                K.RandomEqualize(**random_equalize_kwargs),             ######  Equalization invariance   ######
+                K.RandomMotionBlur(**random_motion_blur_kwargs),        ######  Motion blur invariance   ######
+                K.RandomGaussianNoise(**random_gaussian_noise_kwargs),  ######  Noise invariance   ######
+                K.GaussianBlur(**random_gaussian_blur_kwargs),          ######  Blur invariance   ######
+                K.RandomSharpness(**random_sharpness_kwargs),           ######  Sharpen invariance   ######
+                K.ColorJitter(**random_color_jitter_kwargs),            ######  Jitter invariance   ######
+                K.RandomPosterize(**random_posterize_kwargs),           ######  [CPU-only] Posterize invariance   ######
+#                 ######  Defocus invariance   ######
+#                 K.RandomSolarize(0.001, 0.001, p=1.)                 ######  [Buggy?] Solarize invariance   ######
             ]
+            if source.p > ignore_eps
         }
+        self.invariances = [m for m in invariances.keys()]
+        self.equivariances = source_structure
         source_structure = source_structure + [m for m in invariances.keys()]
         target_structure_map.update(invariances)
         mask_structure_map.update(invariances)
@@ -95,10 +219,25 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
     
 
 
-    def random_action(self, m):
+    def random_action(self, x, n_actions=8):
         '''
-            Generates a random action on the source domain
+            Generates a random action on the source domain. 
+            Does equivariances first, then invariances.
         '''
-        pass
-        
-    # Handle inverses, and the fact that some elements might not have inverses
+        trace = None
+        eqv = list(self.equivariances)
+        if self.randomize_non_invariances:
+            random.shuffle(eqv)
+        inv = list(self.invariances)
+        if self.randomize_invariances:
+            random.shuffle(inv)
+        groups_random_order = eqv + inv
+#         monoid_shuffled = list(self.source._generating_monoids)
+#         random.shuffle(monoid_shuffled)
+        if self.resample_invariances:
+            raise notImplementedError
+        for monoid in groups_random_order:
+#             monoid = random.choice(self.source._generating_monoids)
+            x, trace = monoid.random_action(x, trace)
+            x = x.clamp(0,1)
+        return x, trace

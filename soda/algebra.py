@@ -22,7 +22,7 @@ class MAct: # Action of a monoid on a set S
     def action(self, m, x, trace: Optional[Trace]=None):
         raise NotImplementedError()
 
-    def random_action(x, trace: Optional[Trace]=None):
+    def random_action(self, x, trace: Optional[Trace]=None):
         '''
             Applies some random element in the monoid to x. 
         '''
@@ -115,13 +115,17 @@ class QuickWrapMonoid(MAct):
         for name, func in functions.items():
             setattr(self, name, func)
             self.overwritten_functions[name] = func.__repr__
-        
+    
+    def random_action(self, x, trace=None):
+        return self.group.random_action(x, trace)
+
     def action(self, m, x, trace=None):
         extra = None
         m, x, trace, extra = self._hook_before_action(m, x, trace, extra)
         x, trace = self.group.action(m, x, trace)
+        self._ensure_wrap_type(trace[-1])
         m, x, trace, extra = self._hook_after_action(m, x, trace, extra)
-        return x, trace
+        return x, trace 
     
     def _hook_before_action(self, m, x, trace, extra=None):
         if hasattr(self, 'hook_before_action'):
@@ -235,7 +239,7 @@ class TraceMonoid(MAct):
     def pipeline(self, m: Trace, x: Any, trace: Optional[Trace] = None):
         return self.action(m, x, trace)
     
-    def random_action(x, trace=None):
+    def random_action(self, x, trace=None):
         '''
             Applies some random element in the monoid to x. 
         '''
@@ -251,10 +255,13 @@ class TraceGroup(TraceMonoid, GActMixin):
     '''
     
     def inv(self, m: Union[Trace, Dict]):
+        if isinstance(m, dict):
+           m = m['param'] 
         history = []
         for t in m.reverse():
             monoid = t['_monoid']
             cache_copy = copy.copy(t)
+            # print('monoid:', monoid)
             cache_copy['param'] = monoid.inv(t['param'])
             history.append(cache_copy)
             

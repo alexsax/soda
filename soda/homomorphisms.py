@@ -43,12 +43,14 @@ class NaturalMonoidHomomorphism:
     def action_on_domain(self, m, x, trace=None):
         return self.source.action(m, x, trace)
 
-    def action_on_codomain(self, m, x, trace=None): # TODO: rename
-        m = self._apply_recursively(self.structure_map, m)
+    def action_on_codomain(self, m, x, trace=None, is_source_trace=True): # TODO: rename
+        if is_source_trace:
+            m = self._apply_recursively(self.structure_map, m)
         return self.target.action(m, x, trace)
 
-    def action_on_mask(self, m, x, trace=None): # TODO: rename
-        m = self._apply_recursively(self.mask_structure_map, m)
+    def action_on_mask(self, m, x, trace=None, is_source_trace=True): # TODO: rename
+        if is_source_trace:
+            m = self._apply_recursively(self.mask_structure_map, m)
         return self.mask.action(m, x, trace)
 
     def _apply_recursively(self, mapping: Dict[MAct, MAct], trace: Union[Dict, Trace]) -> Union[Dict, Trace]:
@@ -60,6 +62,7 @@ class NaturalMonoidHomomorphism:
                 return_trace['_monoid'] = mapping[trace['_monoid']]
                 return return_trace
             else:
+                # print(f"no monoid found for {trace['_monoid']}")
                 return trace
         elif isinstance(trace, Trace):
             history = [self._apply_recursively(mapping, t) for t in trace]
@@ -82,6 +85,11 @@ class NaturalGroupHomomorphism(NaturalMonoidHomomorphism):
                  mask_structure_map: Optional[Dict[MAct, GActMixin]] = None,
                 ):
         super().__init__(source_structure, target_structure, structure_map, mask_structure, mask_structure_map)
+
+    def inv_domain(self, m: Trace, x: Any, is_source_trace=True) -> Tuple[Any, Trace]: 
+        # if is_source_trace:
+        #     m = self._apply_recursively(self.structure_map, m)
+        return self.source.inverse_pipeline(x, m)
 
     def inv_codomain(self, m: Trace, x: Any, is_source_trace=True) -> Tuple[Any, Trace]: 
         if is_source_trace:
