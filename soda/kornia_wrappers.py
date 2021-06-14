@@ -43,9 +43,9 @@ class KorniaMAct(MAct):
     def action(self, m, x, trace=None):        
         if trace is None:
             trace = Trace()
-#         x = self.aug(x, m)
         if 'do_inverse' in m:
-            x = self.aug.inverse(x, params=m)
+            tf = self.aug.compute_transformation(x, m)
+            x = self.aug.inverse((x, tf), params=m)
         else:
             x = self.aug(x, m)
         cache = {'__name__': f'{self.__repr__()}', 'param': m}
@@ -188,8 +188,13 @@ class VFlip(KorniaMAct, GActMixin):
 class RandomErasingMask(KorniaGAct):
     def action(self, m, x, trace=None):
         if 'do_inverse' in m:
+            if trace is None:
+                trace = Trace()
             m = copy.copy(m)
-            del m['do_inverse']
+            # del m['do_inverse']
+            cache = {'__name__': f'{self.__repr__()}', 'param': m}
+            cache = self._ensure_wrap_type(cache)
+            return x, trace.push(cache)
         return super().action(m, x, trace)
 
 if __name__ == '__main__':

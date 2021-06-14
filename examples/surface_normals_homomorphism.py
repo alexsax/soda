@@ -69,6 +69,76 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
         return m, x, trace, extra
         
     def __init__(self,
+                # ignore_eps=1e-8,
+                #  random_horizontal_flip_kwargs=dict(
+                #      same_on_batch=False,
+                #      p = 0.5,
+                #      p_batch = 1.0
+                #  ),
+                #  random_vertical_flip_kwargs=dict(
+                #      same_on_batch=False,
+                #      p = 0.,
+                #      p_batch = 1.0
+                #  ),                
+                #  random_affine_kwargs=dict(
+                #      degrees=(-30,30),
+                #      scale=(0.75, 1.25),
+                #      same_on_batch=False,
+                #      p = 0.9,
+                #  ),                   
+                #  random_crop_kwargs=dict(
+                #      size=(512, 512),
+                #      p=0.9,
+                #      resample='NEAREST',
+                #      cropping_mode='resample',
+                #      same_on_batch=False,
+                #  ),
+                #  random_erasing_kwargs=dict(
+                #      scale=(.02, .3),
+                #      ratio=(.3, 1/.3),
+                #      p=0.4
+                #  ),
+                #  random_grayscale_kwargs=dict(
+                #      p=0.2,
+                #  ),
+                #  random_equalize_kwargs=dict(
+                #      p=0.2,
+                #  ),                 
+                #  random_motion_blur_kwargs=dict(
+                #      kernel_size=5,
+                #      angle=35.,
+                #      direction=0.5,
+                #      p=0.0,
+                #  ),
+                #  random_gaussian_noise_kwargs=dict(
+                #      mean=0.,
+                #      std=0.03,
+                #      p=0.8
+                #  ),
+                #  random_gaussian_blur_kwargs=dict(
+                #      kernel_size=(5, 5),
+                #      sigma=(0.1, 2.0),
+                #      p=0.8
+                #  ),
+                #  random_sharpness_kwargs=dict(
+                #      sharpness=10,
+                #      p=0.0,
+                #  ),
+                #  random_color_jitter_kwargs=dict(
+                #      brightness=0.2,
+                #      contrast=0.15,
+                #      saturation=0.8,
+                #      hue=0.3,
+                #      p=0.8
+                #  ),
+                #  random_posterize_kwargs=dict(
+                #      bits=6,
+                #      p=1.0,
+                #  ),  
+                #  randomize_non_invariances=False,
+                #  randomize_invariances=True,
+                #  resample_invariances=False,
+                # ):
                  ignore_eps=1e-8,
                  random_horizontal_flip_kwargs=dict(
                      same_on_batch=False,
