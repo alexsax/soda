@@ -1,8 +1,54 @@
 import copy
 from typing import Any, Optional, Dict, Tuple, Union, Callable
 
-from .algebra import MAct, GActMixin
-from .trace import Trace
+from .algebra import MAct, GActMixin, Element, QuickWrapGroup
+from .trace import Trace, TraceMonoid
+from .kornia_wrappers import KorniaGAct
+
+class NaturalTransformation:
+    def __init__(self, 
+                 source_structure: MAct,
+                 target_structure: MAct,
+                 source_to_target: Dict[MAct, Callable[[Element], Element]],
+                ):
+        '''
+            source_structure: A MAct that defines transformations on the source doimain
+            target_structure: A MAct that defines transformations on the target domain
+            source_to_target:
+                Maps each MAct to a callable that takes a source element to a target element.
+                i.e.
+                >>> elem_mapper = source_to_target[source_monoid]
+                >>> elem_from_target_monoid = elem_mapper(elem_from_source_monoid)
+
+                Note that `source_to_target` acts as the identity on unnamed `MAct`s.
+        '''
+        self.source = source_structure
+        self.target = target_structure
+        self.structure_map = source_to_target
+
+    def source_to_target(self, m: Element) -> Element:
+        fam_source, param_source = m.family, m.param
+        
+        if isinstance(fam_source, TraceMonoid):
+            history = [self.source_to_target(t) for t in param_source]
+            param_source = Trace(history)
+
+        if fam_source in self.structure_map:
+            return_elem = self.structure_map[fam_source](m)
+        else:
+            return_elem = Element(fam_source, param_source)
+        # if isinstance(fam_source, KorniaGAct) or isinstance(fam_source, QuickWrapGroup):
+        #     print(m.param.keys(), return_elem.param.keys())
+        return return_elem
+
+    def __call__(self, m):
+        return self.source_to_target(m)
+
+    def action_on_codomain(self, m, x):
+        return self.target.action(self(m), x)
+
+    def action_on_domain(self, m, x):
+        return self.source.action(m, x)
 
 
 class NaturalMonoidHomomorphism:
@@ -37,41 +83,23 @@ class NaturalMonoidHomomorphism:
         self.source = source_structure
         self.target = target_structure
         self.mask = mask_structure
-        self.structure_map = structure_map
-        self.mask_structure_map = mask_structure_map
+        self.source_to_target = NaturalTransformation(self.source, self.target, structure_map) 
+        self.source_to_mask = NaturalTransformation(self.source, self.mask, mask_structure_map) 
+        # self.structure_map = structure_map
+        # self.mask_structure_map = mask_structure_map
         
-    def action_on_domain(self, m, x, trace=None):
-        return self.source.action(m, x, trace)
+    def action_on_domain(self, m: Element, x: Any):
+        return self.source.action(m, x)
 
-    def action_on_codomain(self, m, x, trace=None, is_source_trace=True): # TODO: rename
-        if is_source_trace:
-            m = self._apply_recursively(self.structure_map, m)
-        return self.target.action(m, x, trace)
+    def action_on_codomain(self, m: Element, x: Any): # TODO: rename
+        return self.target.action(self.source_to_target(m), x)
 
-    def action_on_mask(self, m, x, trace=None, is_source_trace=True): # TODO: rename
-        if is_source_trace:
-            m = self._apply_recursively(self.mask_structure_map, m)
-        return self.mask.action(m, x, trace)
-
-    def _apply_recursively(self, mapping: Dict[MAct, MAct], trace: Union[Dict, Trace]) -> Union[Dict, Trace]:
-        if isinstance(trace, dict):
-            if '_monoid' not in trace:
-                raise ValueError(f"Expected to find key '_monoid' in dict, but not found in {trace.keys()}")
-            if trace['_monoid'] in mapping:
-                return_trace = copy.copy(trace)
-                return_trace['_monoid'] = mapping[trace['_monoid']]
-                return return_trace
-            else:
-                # print(f"no monoid found for {trace['_monoid']}")
-                return trace
-        elif isinstance(trace, Trace):
-            history = [self._apply_recursively(mapping, t) for t in trace]
-            return Trace(history)
-        else:
-            raise NotImplementedError
+    def action_on_mask(self, m: Element, x: Any): # TODO: rename
+        return self.mask.action(self.source_to_mask(m), x)
 
     def __repr__(self):
         return str(type(self)) + str(self.source) + str(self.target) + str(self.mask)+ str(self.mask_structure_map) + str(self.mask_structure_map)
+
 
 class NaturalGroupHomomorphism(NaturalMonoidHomomorphism):
     '''
@@ -86,20 +114,17 @@ class NaturalGroupHomomorphism(NaturalMonoidHomomorphism):
                 ):
         super().__init__(source_structure, target_structure, structure_map, mask_structure, mask_structure_map)
 
-    def inv_domain(self, m: Trace, x: Any, is_source_trace=True) -> Tuple[Any, Trace]: 
-        # if is_source_trace:
-        #     m = self._apply_recursively(self.structure_map, m)
-        return self.source.inverse_pipeline(x, m)
+    def inverse_action_on_domain(self, g: Element, x: Any): 
+        return self.action_on_domain(self.source.inverse(g), x)
 
-    def inv_codomain(self, m: Trace, x: Any, is_source_trace=True) -> Tuple[Any, Trace]: 
-        if is_source_trace:
-            m = self._apply_recursively(self.structure_map, m)
-        return self.target.inverse_pipeline(x, m)
+    def inverse_action_on_codomain(self, g: Element, x: Any): 
+        inv_action = self.target.inverse( self.source_to_target(g) )
+        return self.action_on_codomain(inv_action, x)
 
-    def inv_mask(self, m: Trace, x: Any, is_source_trace=True) -> Tuple[Any, Trace]: 
-        if is_source_trace:
-            m = self._apply_recursively(self.mask_structure_map, m)
-        return self.mask.inverse_pipeline(x, m)
+    def inverse_action_on_mask(self, g: Element, x: Any): 
+        inv_action = self.mask.inverse( self.source_to_mask(g) )
+        return self.action_on_mask(inv_action, x)
+
 
 # Invariance: G Nontrivial --f--> H Trivial
 #   i.e. all elements G are in the kernel of f

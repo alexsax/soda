@@ -1,24 +1,27 @@
 import copy
+import kornia
 import kornia.augmentation as K
 from   kornia.geometry.transform.crop.crop2d import validate_bboxes
 import torch
+from   typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from   packaging import version
 
-from .algebra import MAct, GActMixin
-from .trace import Trace
+
+from .algebra import MAct, GActMixin, Element
 
 class KorniaMAct(MAct):
     
-    def __init__(self, aug, quicktest=True):
+    def __init__(self, aug, clamp=None, quicktest=False):
         '''
             quicktest: Generate a few random actions (m) and make sure action(m, x) matches the expected output.
                 This helps make sure that we don't have weird interactions with Kornia.
         '''
         super().__init__()
         self.aug = aug
+        self.clamp = clamp
         if self.aug.return_transform:
             # self.aug.return_transform = True
             raise ValueError(f"Augmentation {self.aug} must use 'return_transform' == False!")
-        quicktest = False
         if quicktest:
             self.quicktest()
         # add in a sample test case?
@@ -36,21 +39,27 @@ class KorniaMAct(MAct):
     def __repr__(self):
         return f'{type(self).__name__}.{type(self.aug).__name__}'
 
-    def random_action(self, x, trace=None):
-        m = self.aug.forward_parameters(x.shape)
-        return self.action(m, x, trace)
+    def random_action(self, x: Any) -> Tuple[Element, Any]:
+        m = Element(
+            self,
+            self.aug.forward_parameters(x.shape)
+        )
+        return m, self.action(m, x)
     
-    def action(self, m, x, trace=None):        
-        if trace is None:
-            trace = Trace()
-        if 'do_inverse' in m:
-            tf = self.aug.compute_transformation(x, m)
-            x = self.aug.inverse((x, tf), params=m)
+    def action(self, m: Element, x: Any):
+        fam = m.family
+        m = m.param
+        if 'do_inverse' in m and m['do_inverse']: # bit of a hack in that MAct knows about child GActMixin
+            assert version.parse(kornia.__version__) >= version.parse('0.5.4')
+            x = self.aug.inverse(x, params=m)
+            # tf = self.aug.compute_transformation(x, m)
+            # x = self.aug.inverse((x, tf), params=m)
+            # x = self.aug(x, m)
         else:
             x = self.aug(x, m)
-        cache = {'__name__': f'{self.__repr__()}', 'param': m}
-        cache = self._ensure_wrap_type(cache)
-        return x, trace.push(cache)
+        if self.clamp:
+            x = x.clamp(*self.clamp)
+        return x
 
   
 class KorniaGAct(KorniaMAct, GActMixin):
@@ -60,14 +69,41 @@ class KorniaGAct(KorniaMAct, GActMixin):
             quicktest = quicktest
         ) 
     
-    def inv(self, m):
-        m = copy.copy(m)
-        if 'do_inverse' in m:
-            del m['do_inverse']
+    def inverse(self, m: Element) -> Element:
+        param = copy.copy(m.param)
+        if 'do_inverse' in param:
+            del param['do_inverse']
         else:
-            m['do_inverse'] = True
-        return m
+            param['do_inverse'] = True
+        return Element(m.family, param)
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#############################################
+#    Hand-Defined Convenience Transforms    #
+#    **** Candidate for Deprecation ****    #
+#############################################
 ##### Crops
 def bbox_transform(source: torch.Tensor, boxes: torch.Tensor, width: int, height: int) -> torch.Tensor:
     """Convert 2D bounding boxes to masks. Covered area is 1. and the remaining is 0.
@@ -124,41 +160,38 @@ def bbox_transform(source: torch.Tensor, boxes: torch.Tensor, width: int, height
 
 class FixedSizeCrop(KorniaMAct, GActMixin):
     def __init__(quicktest=True, **kwargs):
+        raise NotImplementedError('Need to update for g')
         super().__init__(
             aug = K.RandomCrop(**kwargs),
             quicktest=quicktest)
     
-    def action(self, m, x, trace=None):
+    def action(self, m, x):
+        m = m.param
         if 'inv' in m and m['inv']:
-            x_t, trace = self._inv_action(m, x, trace)
+            x_t = self._inv_action(m, x)
         else:
             if 'original_shape' not in m:  # Bind this action to inputs of a certain size.
                 m['original_shape'] = x.shape
             assert m['original_shape'][-2:] == x.shape[-2:] and m['original_shape'][0] == x.shape[0], f"Trying to apply crop from source image of shape {m['original_shape']}, but source image is {x.shape}"
-            x_t, trace = super().action(m, x, trace)
-        return x_t, trace
+            x_t = super().action(m, x)
+        return x_t
 
-    def _inv_action(self, m, x, trace=None):
+    def _inv_action(self, m, x):
+        m = m.param
         assert 'inv' in m and m['inv'], 'Calling _inv_action(m, x) with m that is not an inverse element'
-        if trace is None:
-            trace = Trace()
-
         B, C, height, width = m['original_shape']
         x_t = bbox_transform(x, m['dst'], height, width)
-
-        cache = {'__name__': f'{self.__repr__()}', 'param': m}
-        cache = self._ensure_wrap_type(cache)
-        return x_t, trace.push(cache)
+        return x_t
         
-    def inv(self, m):
-        m_inv = copy.deepcopy(m)
+    def inverse(self, m):
+        m_inv = copy.deepcopy(m.param)
         m_inv['dst'] = m['src'].clone()
         m_inv['src'] = m['dst'].clone()
         if 'inv' not in m_inv:
             m_inv['inv'] = True
         else:
             m_inv['inv'] = not m_inv['inv']
-        return m_inv
+        return Element(m.family, m_inv)
 
 
 
@@ -172,8 +205,6 @@ class HFlip(KorniaMAct, GActMixin):
     
     def inv(self, m):
         return m
-    
-
 
 class VFlip(KorniaMAct, GActMixin):
     def __init__(quicktest=True):
@@ -186,16 +217,18 @@ class VFlip(KorniaMAct, GActMixin):
         return m
 
 class RandomErasingMask(KorniaGAct):
-    def action(self, m, x, trace=None):
-        if 'do_inverse' in m:
-            if trace is None:
-                trace = Trace()
+    def action(self, m, x):
+        if 'do_inverse' in m.param:
             m = copy.copy(m)
             # del m['do_inverse']
-            cache = {'__name__': f'{self.__repr__()}', 'param': m}
-            cache = self._ensure_wrap_type(cache)
-            return x, trace.push(cache)
-        return super().action(m, x, trace)
+            return x
+        return super().action(m, x)
+
+
+
+
+
+
 
 if __name__ == '__main__':
     import kornia

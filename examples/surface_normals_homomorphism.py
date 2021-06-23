@@ -1,12 +1,13 @@
 import copy
+from   functools import partial
 import kornia
 import kornia.augmentation as K
 import torch
 import random
-from typing import Any, Optional, Dict, Tuple, Union, Callable
+from   typing import Any, Optional, Dict, Tuple, Union, Callable
 
-from ..soda.algebra import MAct, GActMixin, QuickWrapGroup, TrivialGroup, TraceGroup
-from ..soda.trace import Trace
+from ..soda.algebra import MAct, GActMixin, QuickWrapGroup, TrivialGroup, Element
+from ..soda.trace import Trace, TraceGroup
 from ..soda.kornia_wrappers import KorniaMAct, KorniaGAct, RandomErasingMask 
 from ..soda.homomorphisms import NaturalMonoidHomomorphism, NaturalGroupHomomorphism
 
@@ -44,29 +45,30 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
         return (x + 1) / 2
 
     @classmethod
-    def rot_xy(cls, m, x, trace, extra):
-        degrees = m['angle']
-        if 'do_inverse' in m:
+    def rot_xy(cls, m: Element, x: Any, extra: Optional[Dict]):
+        degrees = m.param['angle']
+        if 'do_inverse' in m.param:
             degrees = -degrees
-        x = SurfaceNormalSymmetries.convert_for_geometry(x)
+        x = cls.convert_for_geometry(x)
         FRONT_FACING_VECTOR = torch.tensor([[0,1,0]])
         rads = kornia.geometry.conversions.deg2rad(degrees)
-        axangle = SurfaceNormalSymmetries.FRONT_FACING_VECTOR.to(rads.device) * rads.unsqueeze(-1)
+        axangle = cls.FRONT_FACING_VECTOR.to(rads.device) * rads.unsqueeze(-1)
         rot_mats = kornia.geometry.conversions.angle_axis_to_rotation_matrix(axangle)
-#                 rot_mats = rot_xy(trace[-1]['param']['angle'])
         x = torch.einsum('bdc,bchw->bdhw', rot_mats.to(x.device), x)
-        x = SurfaceNormalSymmetries.convert_for_output(x)
-        return m, x, trace, extra
+        x = cls.convert_for_output(x)
+        return m, x, extra
 
     @classmethod
-    def invert_horiz(cls, m, x, trace, extra):
-        x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_HORIZONTAL_CHANNEL] = 1 - x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_HORIZONTAL_CHANNEL]
-        return m, x, trace, extra
+    def invert_horiz(cls, m: Element, x: Any, extra: Optional[Dict]):
+        batch_prob = m.param['batch_prob']
+        x[batch_prob, cls.SURFACE_NORMALS_HORIZONTAL_CHANNEL] = 1 - x[batch_prob, cls.SURFACE_NORMALS_HORIZONTAL_CHANNEL]
+        return m, x, extra
 
     @classmethod
-    def invert_vert(cls, m, x, trace, extra):
-        x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_VERTICAL_CHANNEL] = 1 - x[m['batch_prob'], SurfaceNormalSymmetries.SURFACE_NORMALS_VERTICAL_CHANNEL]
-        return m, x, trace, extra
+    def invert_vert(cls, m: Element, x: Any, extra: Optional[Dict]):
+        batch_prob = m.param['batch_prob']
+        x[batch_prob, cls.SURFACE_NORMALS_VERTICAL_CHANNEL] = 1 - x[batch_prob, cls.SURFACE_NORMALS_VERTICAL_CHANNEL]
+        return m, x, extra
         
     def __init__(self,
                 # ignore_eps=1e-8,
@@ -139,6 +141,7 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
                 #  randomize_invariances=True,
                 #  resample_invariances=False,
                 # ):
+                 clamp=(0.,1.), # Clamp values after transform.
                  ignore_eps=1e-8,
                  random_horizontal_flip_kwargs=dict(
                      same_on_batch=False,
@@ -260,7 +263,7 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
         ##################################
         trivial_group = TrivialGroup()
         invariances = {
-            KorniaMAct(source): trivial_group
+            KorniaMAct(source, clamp=clamp): trivial_group
             for source in [
                 K.RandomGrayscale(**random_grayscale_kwargs),           ######  Grayscale invariance   ######
                 K.RandomEqualize(**random_equalize_kwargs),             ######  Equalization invariance   ######
@@ -275,11 +278,24 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
             ]
             if source.p > ignore_eps
         }
+
+        ##################################
+        #  INVARIANCES
+        ##################################
         self.invariances = [m for m in invariances.keys()]
         self.equivariances = source_structure
         source_structure = source_structure + [m for m in invariances.keys()]
         target_structure_map.update(invariances)
+        target_structure_map = {
+            source: partial(Element.replace_family, family=target)
+            for source, target in target_structure_map.items()
+        }
+
         mask_structure_map.update(invariances)
+        mask_structure_map = {
+            source: partial(Element.replace_family, family=target)
+            for source, target in mask_structure_map.items()
+        }
 
         source_group = TraceGroup(*source_structure)
         target_group = TraceGroup(*target_structure)
@@ -294,7 +310,6 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
             Generates a random action on the source domain. 
             Does equivariances first, then invariances.
         '''
-        trace = None
         eqv = list(self.equivariances)
         if self.randomize_non_invariances:
             random.shuffle(eqv)
@@ -306,8 +321,11 @@ class SurfaceNormalSymmetries(NaturalGroupHomomorphism):
 #         random.shuffle(monoid_shuffled)
         if self.resample_invariances:
             raise notImplementedError
+        history = []
         for monoid in groups_random_order:
 #             monoid = random.choice(self.source._generating_monoids)
-            x, trace = monoid.random_action(x, trace)
+            m, x = monoid.random_action(x)
+            history.append(m)
             x = x.clamp(0,1)
-        return x, trace
+        trace = Element(family=self.source, param=Trace(history))
+        return trace, x
