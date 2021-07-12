@@ -6,10 +6,10 @@ import torch
 import random
 from   typing import Any, Optional, Dict, Tuple, Union, Callable
 
-from ..soda.algebra import MAct, GActMixin, QuickWrapGroup, TrivialGroup, Element
-from ..soda.trace import Trace, TraceGroup
-from ..soda.kornia_wrappers import KorniaMAct, KorniaGAct, RandomErasingMask 
-from ..soda.homomorphisms import NaturalMonoidHomomorphism, NaturalGroupHomomorphism
+from soda.algebra import MAct, GActMixin, QuickWrapGroup, TrivialGroup, Element
+from soda.trace import Trace, TraceGroup
+from soda.kornia_wrappers import KorniaMAct, KorniaGAct, RandomErasingMask 
+from soda.homomorphisms import NaturalMonoidHomomorphism, NaturalGroupHomomorphism
 
 #########################################################
 # Examples for surface normals
